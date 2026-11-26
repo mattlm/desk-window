@@ -1,0 +1,16 @@
+# Starts Desk Window with your Plasma session. Copy to
+# ~/.config/systemd/user/, adjust ExecStart, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now desk-window
+[Unit]
+Description=Desk Window: control this desktop from a browser
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/desk-window --host 0.0.0.0 --password-file %h/.config/desk-window/password
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,5 @@
+# Let the user signed in at the seat create virtual input devices, which
+# Desk Window needs for the mouse and keyboard. Copy to /etc/udev/rules.d/,
+# then: sudo udevadm control --reload && sudo udevadm trigger
+# (must sort before 73-seat-late.rules, which applies the uaccess tag)
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
