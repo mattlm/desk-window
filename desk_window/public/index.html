@@ -1,0 +1,1580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Desk Window</title>
+<style>
+  :root {
+    --bg: #f3f4f6; --panel: #ffffff; --text: #111827; --muted: #6b7280;
+    --border: #d1d5db; --frame: #e5e7eb; --output: #9ca3af;
+    --accent: #2563eb; --accent-text: #ffffff; --ok: #16a34a; --bad: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10; --panel: #15181d; --text: #e5e7eb; --muted: #8b93a1;
+      --border: #2a2f37; --frame: #1b1f25; --output: #4b5563;
+      --accent: #3b82f6; --accent-text: #ffffff; --ok: #22c55e; --bad: #ef4444;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    position: relative; z-index: 2;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .status.on .dot { background: var(--ok); }
+  .spacer { flex: 1; }
+  label.check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .shot-controls { display: flex; align-items: center; gap: 8px; }
+  .shot-controls[hidden] { display: none; }
+  select {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+  }
+  button {
+    font: inherit; color: var(--text); background: transparent; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 12px;
+  }
+  button:hover { border-color: var(--muted); }
+  button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  main {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 12px 16px; gap: 8px;
+  }
+  /* margin: auto on the frame (not justify/align-content: center) so that at
+     actual size a frame bigger than the stage scrolls instead of being
+     clipped on the left and top. */
+  #stage { flex: 1; min-height: 0; width: 100%; display: flex; overflow: auto; }
+  #frame {
+    margin: auto; flex: none;
+    position: relative; background: var(--frame); border: 1px solid var(--border);
+    touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair;
+    overflow: hidden;
+  }
+  #frame.capturing { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #frame.no-cursor { cursor: none; }
+  #frame.no-cursor #cursor { visibility: hidden; }
+  #shot, #video { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #shot[hidden], #video[hidden] { display: none; }
+  .output {
+    position: absolute; border: 1px dashed var(--output); pointer-events: none;
+    display: flex; align-items: flex-start; justify-content: flex-start;
+  }
+  .output span {
+    font-size: 11px; color: var(--muted); background: var(--frame);
+    padding: 2px 6px; border-bottom-right-radius: 4px;
+  }
+  #frame.has-shot .output { border-color: transparent; }
+  #frame.has-shot .output span { display: none; }
+  /* The output the video covers, when it covers only one of several. */
+  .output.covered { border-color: transparent; }
+  .output.covered span { display: none; }
+  #cursor {
+    position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+    border: 2px solid var(--accent); pointer-events: none; display: none;
+  }
+  #hint, #screen-status { color: var(--muted); font-size: 12px; text-align: center; }
+  #hint { min-height: 1.4em; }
+  #screen-status.error { color: var(--bad); }
+  select[hidden] { display: none; }
+  .settings {
+    position: absolute; top: calc(100% + 4px); right: 16px; width: min(400px, calc(100vw - 32px));
+    max-height: calc(100vh - 80px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.2); padding: 4px 14px 12px;
+  }
+  .settings[hidden], .settings section[hidden], .settings label[hidden] { display: none; }
+  .settings h2 { font-size: 13px; margin: 12px 0 6px; }
+  .settings h3 { font-size: 12px; margin: 10px 0 4px; color: var(--muted); font-weight: 600; }
+  .settings .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0; }
+  .settings .row-check { margin: 8px 0; }
+  .settings .note { color: var(--muted); font-size: 12px; margin: 4px 0; }
+  .settings .note:empty { display: none; }
+  .settings ul { margin: 0; padding-left: 18px; font-size: 12px; }
+  .settings select:disabled, .settings button:disabled { opacity: 0.6; cursor: default; }
+  .settings .note.bad { color: var(--bad); }
+  /* A recent video error: a dot on the ⚙ button until it's 5 minutes old. */
+  #settings-btn { position: relative; }
+  #settings-btn.alert::after {
+    content: ''; position: absolute; top: 2px; right: 2px; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--bad);
+  }
+  .bench-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+  #bench-results { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  #bench-results[hidden] { display: none; }
+  #bench-results th, #bench-results td { padding: 3px 4px; text-align: right; border-bottom: 1px solid var(--border); }
+  #bench-results th:first-child, #bench-results td:first-child { text-align: left; }
+  #bench-results th { color: var(--muted); font-weight: 600; cursor: help; }
+  #error { color: var(--bad); }
+  #popped-note { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  #popped-note[hidden] { display: none; }
+  /* Fill: only the desktop, as big as the window allows. */
+  body.filled { background: #000; }
+  body.filled header, body.filled #hint, body.filled #screen-status { display: none; }
+  body.filled main {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+      env(safe-area-inset-bottom) env(safe-area-inset-left);
+    gap: 0;
+  }
+  body.filled #frame { border: 0; outline: none; }
+  #fill-bar {
+    display: none; position: fixed; z-index: 3; gap: 6px;
+    top: calc(env(safe-area-inset-top) + 6px); right: calc(env(safe-area-inset-right) + 6px);
+  }
+  body.filled #fill-bar { display: flex; }
+  #fill-bar button {
+    padding: 4px 10px; color: #fff; opacity: 0.6;
+    background: rgb(0 0 0 / 0.5); border-color: rgb(255 255 255 / 0.3);
+  }
+  #fill-bar button.active { background: var(--accent); border-color: var(--accent); opacity: 0.8; }
+  #kbd {
+    position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0;
+    border: 0; padding: 0; resize: none; font-size: 16px; /* 16px: no iOS zoom on focus */
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Desk Window</h1>
+  <div class="status" id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
+  <div class="spacer"></div>
+  <div class="shot-controls" id="screen-controls" hidden>
+    <label class="check">Screen
+      <select id="screen-mode">
+        <option value="off">Off</option>
+        <option value="shots">Screenshots</option>
+        <option value="video">Video</option>
+      </select>
+    </label>
+  </div>
+  <button id="kbd-btn" type="button">Keyboard</button>
+  <button id="size-btn" type="button" title="Show the desktop at its actual size: one desktop pixel per screen pixel">1:1</button>
+  <button id="pop-btn" type="button" title="Pop the desktop out into a floating window that stays on top">Pop out</button>
+  <button id="fs-btn" type="button">Fullscreen</button>
+  <button id="fill-btn" type="button" title="Show only the desktop, filling the screen">Fill</button>
+  <button id="settings-btn" type="button" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings">⚙</button>
+  <div id="settings" class="settings" hidden>
+    <section id="shot-settings">
+      <h2>Screen</h2>
+      <label class="row">Screenshot rate
+        <select id="shot-rate">
+          <option value="250">4 / s</option>
+          <option value="500">2 / s</option>
+          <option value="1000">every 1 s</option>
+          <option value="2000">every 2 s</option>
+          <option value="5000">every 5 s</option>
+        </select>
+      </label>
+      <label class="check row-check" title="Over the frame, show only the desktop's own cursor from the video">
+        <input type="checkbox" id="hide-cursor"> Hide cursor over the frame (video only)
+      </label>
+    </section>
+    <section id="video-settings">
+      <h2>Video</h2>
+      <p class="note">Shared: a change here applies to everyone watching.</p>
+      <label class="row">Codec
+        <select id="v-codec">
+          <option value="h264">H.264</option>
+          <option value="h265">H.265</option>
+          <option value="av1">AV1</option>
+        </select>
+      </label>
+      <label class="row">Bitrate
+        <select id="v-bitrate" title="Auto finds the highest bitrate that works: down a step after an encoder error or the stream falling behind, up a step after a few busy minutes without trouble">
+          <option value="auto" id="v-bitrate-auto">Auto</option>
+          <option value="2000">2 Mb/s</option>
+          <option value="4000">4 Mb/s</option>
+          <option value="8000">8 Mb/s</option>
+          <option value="12000">12 Mb/s</option>
+          <option value="20000">20 Mb/s</option>
+          <option value="30000">30 Mb/s</option>
+          <option value="50000">50 Mb/s</option>
+        </select>
+      </label>
+      <label class="row">Frame rate
+        <select id="v-fps" title="A cap: the desktop only sends a frame when something changes, and never more often than its display refreshes">
+          <option value="240" id="v-fps-max">Max</option>
+          <option value="60">60 fps</option>
+          <option value="30">30 fps</option>
+          <option value="15">15 fps</option>
+          <option value="5">5 fps</option>
+        </select>
+      </label>
+      <label class="row">Resolution
+        <select id="v-scale">
+          <option value="1">Full</option>
+          <option value="0.75">¾</option>
+          <option value="0.5">½</option>
+        </select>
+      </label>
+      <div class="bench-buttons">
+        <button id="v-repick" type="button" title="KDE asks again, on the desktop, which screen to share">Pick screen again</button>
+      </div>
+      <p class="note" id="v-note"></p>
+      <p class="note" id="v-now"></p>
+      <p class="note" id="v-health"></p>
+      <h3>This browser decodes</h3>
+      <ul id="v-support"><li>checking…</li></ul>
+      <h3>Benchmark</h3>
+      <p class="note"><b>Sweep</b> (~40 s): a generated test picture, at this
+        desktop's size and the current codec, through the encoder, network
+        and this browser. It stands in for the screen for anyone watching.
+        <b>On screen now</b> (10 s): the real stream, so put something
+        moving on the desktop first.</p>
+      <div class="bench-buttons">
+        <button id="bench-sweep" type="button">Run sweep</button>
+        <button id="bench-now" type="button">Measure on screen now</button>
+      </div>
+      <p class="note" id="bench-status"></p>
+      <table id="bench-results" hidden>
+        <thead><tr>
+          <th>Test</th>
+          <th title="Frames the server encoded per second">Sent</th>
+          <th title="Frames this browser received per second">Recv</th>
+          <th title="Frames this browser decoded per second">Decoded</th>
+          <th title="Megabits per second received">Mb/s</th>
+          <th title="Times this browser fell behind and skipped ahead to the next keyframe">Skips</th>
+          <th title="Median round trip of a small message, queued behind any frames still on their way (ms)">RTT</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </div>
+</header>
+<main>
+  <div id="popped-note" hidden>Popped out into a floating window. Close it, or click Pop out again, to bring it back.</div>
+  <div id="stage">
+    <div id="frame">
+      <img id="shot" alt="" hidden>
+      <canvas id="video" hidden></canvas>
+      <div id="cursor"></div>
+    </div>
+  </div>
+  <div id="hint"></div>
+  <div id="screen-status"></div>
+</main>
+<div id="fill-bar">
+  <button id="fill-kbd" type="button" title="Keyboard" aria-label="Keyboard">⌨</button>
+  <button id="fill-exit" type="button" title="Leave fill" aria-label="Leave fill">✕</button>
+</div>
+<textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Keyboard input"></textarea>
+<script>
+const $ = (s) => document.querySelector(s);
+const frame = $('#frame'), stage = $('#stage'), shot = $('#shot'), cursor = $('#cursor');
+const kbd = $('#kbd'), kbdBtn = $('#kbd-btn'), hint = $('#hint');
+const kbdBtns = [kbdBtn, $('#fill-kbd')]; // the header's, and Fill's floating one
+
+let layout = null;
+let ws = null, backoff = 500;
+let capturing = false;
+let resumeCapture = false; // see stopCapture()
+
+// --- connection -------------------------------------------------------------
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function setStatus(on, text) {
+  $('#status').classList.toggle('on', on);
+  $('#status-text').textContent = text;
+}
+
+function connect() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  ws.onopen = () => { backoff = 500; setStatus(true, 'connected'); };
+  ws.onclose = () => {
+    setStatus(false, backoff >= 4000 ? 'disconnected (signed out? reload)' : 'reconnecting…');
+    setTimeout(connect, backoff);
+    backoff = Math.min(backoff * 2, 8000);
+  };
+}
+
+// --- layout -----------------------------------------------------------------
+
+async function loadLayout() {
+  let next;
+  try {
+    const r = await fetch('/api/layout', { cache: 'no-store' });
+    if (r.status === 401) { location.href = '/login'; return; }
+    next = await r.json();
+    if (!r.ok) throw new Error(next.error || r.statusText);
+  } catch (err) {
+    showHint(`Couldn't read the desktop layout: ${err.message}`, true);
+    return;
+  }
+  if (JSON.stringify(next) === JSON.stringify(layout)) return;
+  layout = next;
+  frame.querySelectorAll('.output').forEach((el) => el.remove());
+  for (const o of layout.outputs) {
+    const el = document.createElement('div');
+    el.className = 'output';
+    Object.assign(el.style, {
+      left: `${(o.x / layout.width) * 100}%`, top: `${(o.y / layout.height) * 100}%`,
+      width: `${(o.w / layout.width) * 100}%`, height: `${(o.h / layout.height) * 100}%`,
+    });
+    el.innerHTML = '<span></span>';
+    el.firstChild.textContent = `${o.name} · ${o.w}×${o.h}`;
+    frame.insertBefore(el, cursor);
+  }
+  const video = layout.video && canDecode;
+  modeSel.querySelector('[value="shots"]').hidden = !layout.screenshots;
+  modeSel.querySelector('[value="video"]').hidden = !video;
+  $('#screen-controls').hidden = !layout.screenshots && !video;
+  rateSel.closest('label').hidden = !layout.screenshots;
+  hideCursorBox.closest('label').hidden = !video;
+  $('#shot-settings').hidden = !layout.screenshots && !video;
+  $('#video-settings').hidden = !video;
+  initRate(layout.screenshotIntervalMs);
+  // "Max" is the server's top cap (240), which in practice means whatever
+  // the desktop's display refreshes at: label it with that.
+  const hz = Math.max(0, ...layout.outputs.map((o) => o.hz || 0));
+  $('#v-fps-max').textContent = hz ? `Max (${hz} fps, the display's rate)` : 'Max (the display’s rate)';
+  if ((mode === 'shots' && !layout.screenshots) || (mode === 'video' && !video)) setMode('off');
+  placeVideo();
+  fit();
+  showHint();
+}
+
+// The frame can live in this page or in the popout window (see Pop out),
+// so anything per-window (rAF, devicePixelRatio, visibility) goes through
+// the window it's currently in.
+const view = () => frame.ownerDocument.defaultView;
+
+function fit() {
+  if (!layout) return;
+  if (actualSize) {
+    // One desktop pixel per device pixel: sharp, and half size on a 2x screen.
+    const dpr = view().devicePixelRatio || 1;
+    frame.style.width = `${layout.width / dpr}px`;
+    frame.style.height = `${layout.height / dpr}px`;
+    return;
+  }
+  const r = stage.getBoundingClientRect();
+  const s = Math.min(r.width / layout.width, r.height / layout.height);
+  frame.style.width = `${Math.floor(layout.width * s)}px`;
+  frame.style.height = `${Math.floor(layout.height * s)}px`;
+}
+
+function showHint(text, error) {
+  if (text) {
+    hint.innerHTML = '';
+    const span = document.createElement('span');
+    if (error) span.id = 'error';
+    span.textContent = text;
+    hint.append(span);
+    return;
+  }
+  hint.textContent = capturing
+    ? `Keyboard captured. Press Esc three times quickly, or click Keyboard, to release.`
+    : resumeCapture
+    ? 'Keyboard paused. Click the frame to pick it back up.'
+    : 'Mouse: move, click, drag, scroll inside the frame (a click also captures the keyboard). Touch: tap = click, hold = right click, drag, two fingers = scroll.';
+}
+
+// --- pointer ----------------------------------------------------------------
+
+// e.button -> server button name. 3/4 are the thumb buttons (mouse 4/5).
+const BUTTONS = { 0: 'left', 1: 'middle', 2: 'right', 3: 'back', 4: 'forward' };
+let pendingMove = null, moveQueued = false;
+
+function norm(e) {
+  const r = frame.getBoundingClientRect();
+  return {
+    x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+    y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+  };
+}
+
+function showCursor(p) {
+  cursor.style.display = 'block';
+  cursor.style.left = `${p.x * 100}%`;
+  cursor.style.top = `${p.y * 100}%`;
+}
+
+function moveTo(p) {
+  pendingMove = p;
+  showCursor(p);
+  if (moveQueued) return;
+  moveQueued = true;
+  // The popout's own rAF: this tab's stops while it's in the background.
+  view().requestAnimationFrame(flushMove);
+}
+
+function flushMove() {
+  moveQueued = false;
+  if (pendingMove) send({ t: 'move', ...pendingMove });
+  pendingMove = null;
+}
+
+function click(b) {
+  send({ t: 'button', b, down: true });
+  send({ t: 'button', b, down: false });
+}
+
+// Touch: the finger is the cursor. Tap = left click, hold still for 500ms =
+// right click, move = left drag, a second finger = two-finger scroll.
+const touches = new Map();
+let gesture = null; // { id, x0, y0, mode: 'pending'|'hold'|'drag'|'scroll', timer, lastY, lastX }
+
+function touchDown(e) {
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size === 1) {
+    moveTo(norm(e));
+    flushMove();
+    gesture = { id: e.pointerId, x0: e.clientX, y0: e.clientY, mode: 'pending' };
+    gesture.timer = setTimeout(() => { if (gesture && gesture.mode === 'pending') gesture.mode = 'hold'; }, 500);
+  } else if (gesture && (gesture.mode === 'pending' || gesture.mode === 'hold')) {
+    clearTimeout(gesture.timer);
+    gesture.mode = 'scroll';
+  }
+}
+
+function touchMove(e) {
+  const prev = touches.get(e.pointerId);
+  if (!prev || !gesture) return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (gesture.mode === 'scroll') {
+    // Natural scrolling: finger up = content moves up = scroll down. Each
+    // finger's movement counts half, so two fingers together = full speed.
+    const k = 1 / (40 * touches.size);
+    send({ t: 'wheel', dx: -(e.clientX - prev.x) * k, dy: -(e.clientY - prev.y) * k });
+    return;
+  }
+  if (e.pointerId !== gesture.id) return;
+  if (gesture.mode !== 'drag' && Math.hypot(e.clientX - gesture.x0, e.clientY - gesture.y0) > 8) {
+    clearTimeout(gesture.timer);
+    gesture.mode = 'drag';
+    send({ t: 'button', b: 'left', down: true });
+  }
+  moveTo(norm(e));
+}
+
+function touchUp(e, cancelled) {
+  touches.delete(e.pointerId);
+  if (!gesture) return;
+  if (e.pointerId === gesture.id || touches.size === 0) {
+    clearTimeout(gesture.timer);
+    flushMove();
+    if (gesture.mode === 'drag') send({ t: 'button', b: 'left', down: false });
+    else if (!cancelled && gesture.mode === 'pending') click('left');
+    else if (!cancelled && gesture.mode === 'hold') click('right');
+    if (gesture.mode !== 'scroll' || touches.size === 0) gesture = null;
+  }
+}
+
+// e.buttons bit for each e.button value (left, middle, right, back, forward).
+const BUTTON_BITS = { 0: 1, 1: 4, 2: 2, 3: 8, 4: 16 };
+const mouseDown = new Set();
+
+// While a mouse button is held, motion goes as relative deltas (desktop px)
+// through the server's relative mouse, not as absolute positions: games
+// that turn the camera on drag lock the pointer and only read relative
+// motion. Batched per frame; fractions carry over so slow drags add up.
+// On release the cursor is put back under the browser's pointer.
+const relPending = [0, 0];
+let relQueued = false;
+
+// A drag that reaches the frame's edge locks the pointer (Pointer Lock API),
+// so the browser's cursor can't leave the frame or stop at the screen edge
+// and the drag keeps going. Only near the edge, so clicks and short drags
+// don't lock (Chrome shows a banner on every lock). While locked, clientX/Y
+// are frozen, so the drawn cursor follows the movement deltas instead. On
+// release the lock ends and the desktop cursor goes back under the browser's
+// cursor, where the lock froze it.
+const LOCK_EDGE = 4; // px inside the frame's edge
+let lockPos = null; // normalized drawn-cursor position while locking/locked
+let lockWanted = false;
+
+function isLocked() {
+  return frame.ownerDocument.pointerLockElement === frame;
+}
+
+function requestLock(e) {
+  lockWanted = true;
+  lockPos = norm(e);
+  try {
+    const p = frame.requestPointerLock();
+    if (p && p.catch) p.catch(() => { lockWanted = false; });
+  } catch {
+    lockWanted = false;
+  }
+}
+
+function endLock() {
+  lockPos = null;
+  if (!lockWanted && !isLocked()) return;
+  lockWanted = false;
+  if (isLocked()) frame.ownerDocument.exitPointerLock();
+}
+
+function queueRel(e) {
+  const r = frame.getBoundingClientRect();
+  relPending[0] += e.movementX * layout.width / r.width;
+  relPending[1] += e.movementY * layout.height / r.height;
+  if (lockPos) {
+    lockPos = {
+      x: Math.min(1, Math.max(0, lockPos.x + e.movementX / r.width)),
+      y: Math.min(1, Math.max(0, lockPos.y + e.movementY / r.height)),
+    };
+    showCursor(lockPos);
+  } else {
+    showCursor(norm(e));
+    if (e.clientX < r.left + LOCK_EDGE || e.clientX > r.right - LOCK_EDGE
+        || e.clientY < r.top + LOCK_EDGE || e.clientY > r.bottom - LOCK_EDGE) requestLock(e);
+  }
+  if (relQueued) return;
+  relQueued = true;
+  view().requestAnimationFrame(flushRel);
+}
+
+function flushRel() {
+  relQueued = false;
+  const dx = Math.trunc(relPending[0]), dy = Math.trunc(relPending[1]);
+  if (!dx && !dy) return;
+  relPending[0] -= dx;
+  relPending[1] -= dy;
+  send({ t: 'rel', dx, dy });
+}
+
+function mouseButton(b, down, e) {
+  if (!b || mouseDown.has(b) === down) return;
+  if (down) {
+    // Press where the pointer is (only the first button; later ones join the drag).
+    if (e && mouseDown.size === 0) { moveTo(norm(e)); flushMove(); }
+    mouseDown.add(b);
+    send({ t: 'button', b, down: true });
+    return;
+  }
+  flushRel();
+  mouseDown.delete(b);
+  send({ t: 'button', b, down: false });
+  if (mouseDown.size === 0) {
+    relPending[0] = relPending[1] = 0;
+    endLock();
+    if (e) { moveTo(norm(e)); flushMove(); }
+  }
+}
+
+frame.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  frame.setPointerCapture(e.pointerId);
+  // A mouse or pen click in the frame always captures the keyboard. A touch
+  // only picks a paused capture back up: capturing focuses the textarea,
+  // which would pop up the soft keyboard on every tap.
+  if (!capturing && (resumeCapture || e.pointerType !== 'touch')) startCapture();
+  syncShift(e);
+  if (e.pointerType === 'touch') return touchDown(e);
+  mouseButton(BUTTONS[e.button], true, e);
+});
+frame.addEventListener('pointermove', (e) => {
+  syncShift(e);
+  if (e.pointerType === 'touch') return touchMove(e);
+  if (mouseDown.size) queueRel(e);
+  else moveTo(norm(e));
+  // A second button pressed or released mid-drag only shows up here
+  // (pointerdown/up fire for the first button down and the last one up).
+  if (e.button >= 0 && BUTTONS[e.button]) mouseButton(BUTTONS[e.button], !!(e.buttons & BUTTON_BITS[e.button]), e);
+});
+frame.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch') return touchUp(e, false);
+  mouseButton(BUTTONS[e.button], false, e);
+});
+// If the browser takes the pointer away mid-drag, let go of the button
+// rather than leaving it held on the desktop.
+for (const type of ['pointercancel', 'lostpointercapture']) {
+  frame.addEventListener(type, (e) => {
+    if (e.pointerType === 'touch') { if (type === 'pointercancel') touchUp(e, true); return; }
+    // Taking the pointer lock releases pointer capture; the drag goes on.
+    if (type === 'lostpointercapture' && (lockWanted || isLocked())) return;
+    for (const b of [...mouseDown]) mouseButton(b, false);
+  });
+}
+// Lock events fire on the frame's document, so the popout's is watched too.
+function watchLock(doc) {
+  // Refused (no user activation, popout, ...): carry on unlocked; capture
+  // is only released once a lock is taken, so the drag is unaffected.
+  doc.addEventListener('pointerlockerror', () => { lockWanted = false; lockPos = null; });
+  // Ended mid-drag (Esc, window switch): pointer capture went with the lock,
+  // so the release might never reach the frame; let go now.
+  doc.addEventListener('pointerlockchange', () => {
+    if (isLocked() || !lockWanted) return;
+    lockWanted = false;
+    lockPos = null;
+    for (const b of [...mouseDown]) mouseButton(b, false);
+  });
+  // Belt and braces for the frame's own contextmenu handler: on macOS,
+  // shift+right-click still brought up the browser's menu.
+  doc.addEventListener('contextmenu', (e) => {
+    if (mouseDown.size || stage.contains(e.target)) e.preventDefault();
+  }, true);
+}
+watchLock(document);
+// Keep focus (and so keyboard capture, and any held modifier) on the
+// hidden textarea when clicking the frame.
+frame.addEventListener('mousedown', (e) => e.preventDefault());
+frame.addEventListener('contextmenu', (e) => e.preventDefault());
+// Mouse 4/5 are back/forward to the browser, which navigates on release:
+// stop that so they only reach the desktop.
+for (const type of ['mouseup', 'auxclick']) {
+  frame.addEventListener(type, (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); });
+}
+frame.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  syncShift(e);
+  // To notches. A notched wheel's legacy wheelDelta is a whole multiple of
+  // 120 per notch (opposite sign), with macOS's scroll acceleration already
+  // applied: a slow click is 120, a fast spin up to ~8 notches per event.
+  // Its deltaY isn't usable: on macOS a slow click is only ~4px, which as
+  // 100px per notch barely scrolled. Trackpads give smooth wheelDeltas that
+  // aren't multiples of 120, so they keep the proportional pixel path below.
+  let dx, dy;
+  const wx = e.wheelDeltaX, wy = e.wheelDeltaY;
+  if ((wx || wy) && wx % 120 === 0 && wy % 120 === 0) {
+    dx = -wx / 120;
+    dy = -wy / 120;
+  } else {
+    // ~100px per notch in pixel mode, 3 lines per notch in line mode.
+    const per = e.deltaMode === 1 ? 3 : e.deltaMode === 2 ? 1 : 100;
+    dx = e.deltaX / per;
+    dy = e.deltaY / per;
+  }
+  // The browser turns shift+wheel into horizontal scroll. While the keyboard
+  // is captured, Shift is also held on the desktop, so send the wheel as it
+  // was and let the desktop app apply its own shift+wheel behaviour, as it
+  // would with a local mouse (otherwise it would get shift + horizontal).
+  if (capturing && e.shiftKey && !dy && dx) [dx, dy] = [0, dx];
+  send({ t: 'wheel', dx, dy });
+}, { passive: false });
+
+// --- keyboard ---------------------------------------------------------------
+
+// The hidden textarea is the focus target. Physical keyboards send
+// KeyboardEvent.code (mapped server-side). Soft keyboards send keyCode 229 /
+// "Unidentified", so their text is read from the textarea instead. It holds
+// one sentinel character so a Backspace on an "empty" field still fires.
+//
+// With a mouse or trackpad (so, a physical keyboard), it's read-only: keys
+// still fire keydown/keyup, but macOS's press-and-hold accent picker (and
+// other text input UI like dead-key composition) only appears in editable
+// fields, and it was popping up whenever a key was held. Phones need it
+// editable, since that's the only way their soft keyboard types anything.
+if (!matchMedia('(pointer: coarse)').matches) kbd.readOnly = true;
+
+const SENTINEL = ' ';
+const NAMED = new Set(['Backspace', 'Enter', 'Tab', 'Escape', 'Delete',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End']);
+let escTimes = [];
+
+function resetKbd() {
+  kbd.value = SENTINEL;
+  kbd.setSelectionRange(1, 1);
+}
+
+function startCapture() {
+  capturing = true;
+  store('keyboard', '1');
+  resetKbd();
+  kbd.focus({ preventScroll: true });
+  for (const b of kbdBtns) b.classList.add('active');
+  frame.classList.add('capturing');
+  showHint();
+}
+
+// resume: capture ended by focus moving away (clicking outside, switching
+// tabs or windows), not by the user turning it off, so clicking back into
+// the frame turns it straight back on.
+function stopCapture(resume = false) {
+  if (!capturing) return;
+  capturing = false;
+  resumeCapture = resume;
+  store('keyboard', resume ? '1' : '0'); // paused still counts as on
+  releaseAll();
+  kbd.blur();
+  for (const b of kbdBtns) b.classList.remove('active');
+  frame.classList.remove('capturing');
+  showHint();
+}
+
+function keyMsg(e, down) {
+  if (e.keyCode === 229 || e.key === 'Unidentified') return null;
+  if (e.code) return { t: 'key', code: e.code, key: e.key, down };
+  if (NAMED.has(e.key)) return { t: 'key', key: e.key, down };
+  return null;
+}
+
+function sendKey(msg) {
+  if (SHIFTS.has(msg.code)) {
+    if (msg.down) heldShifts.add(msg.code);
+    else heldShifts.delete(msg.code);
+  }
+  if (msg.code && !MODIFIERS.has(msg.code)) {
+    if (msg.down) heldKeys.add(msg.code);
+    else heldKeys.delete(msg.code);
+  }
+  send(msg);
+}
+
+// On macOS, a key let go while Cmd is held fires no keyup (in every
+// browser), so Cmd+C done as Cmd down, C down, C up, Cmd up leaves C held on
+// the desktop, where KDE repeats it. When Cmd comes up, let go of every
+// other non-modifier key the page still thinks is held. One that really is
+// still held comes back down with its next auto-repeat keydown.
+const MODIFIERS = new Set(['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+  'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'CapsLock', 'Fn']);
+const heldKeys = new Set();
+
+function releaseAfterCmd() {
+  for (const code of [...heldKeys]) sendKey({ t: 'key', code, down: false });
+}
+
+// A Shift keyup can go missing: a browser menu that opens over the page (on
+// macOS, shift+right-click shows Chrome's own context menu) takes the
+// keyboard, and Shift comes up while it's open, leaving Shift held on the
+// desktop. Every mouse and key event says whether Shift is down, so when
+// one says it isn't and the page thinks it is, let it go.
+const SHIFTS = new Set(['ShiftLeft', 'ShiftRight']);
+const heldShifts = new Set();
+
+function syncShift(e) {
+  if (!heldShifts.size || e.shiftKey) return;
+  for (const code of [...heldShifts]) sendKey({ t: 'key', code, down: false });
+}
+
+// Let go of every key and button on the desktop, and forget what the page
+// thought was held.
+function releaseAll() {
+  send({ t: 'release' });
+  heldShifts.clear();
+  heldKeys.clear();
+  mouseDown.clear();
+  endLock();
+}
+
+kbd.addEventListener('keydown', (e) => {
+  if (!capturing) return;
+  const msg = keyMsg(e, true);
+  if (!msg) return; // soft keyboard: let the textarea take it
+  e.preventDefault();
+  syncShift(e);
+  sendKey(msg);
+  if (e.key === 'Escape' && !e.repeat) {
+    const now = performance.now();
+    escTimes = escTimes.filter((t) => now - t < 1000).concat(now);
+    if (escTimes.length >= 3) { escTimes = []; stopCapture(); }
+  }
+});
+kbd.addEventListener('keyup', (e) => {
+  if (!capturing) return;
+  const msg = keyMsg(e, false);
+  if (!msg) return;
+  e.preventDefault();
+  sendKey(msg);
+  if (e.code === 'MetaLeft' || e.code === 'MetaRight') releaseAfterCmd();
+});
+
+function flushKbd() {
+  const v = kbd.value;
+  if (v === SENTINEL) return;
+  let text = v;
+  if (v.startsWith(SENTINEL)) {
+    text = v.slice(SENTINEL.length);
+  } else {
+    send({ t: 'key', key: 'Backspace', down: true });
+    send({ t: 'key', key: 'Backspace', down: false });
+    text = v.replaceAll(SENTINEL, '');
+  }
+  if (text) send({ t: 'text', text });
+  resetKbd();
+}
+kbd.addEventListener('input', (e) => { if (!e.isComposing) flushKbd(); });
+kbd.addEventListener('compositionend', flushKbd);
+kbd.addEventListener('blur', () => {
+  // A second mouse button pressed mid-drag fires no mousedown (the browser
+  // holds back mouse events after the cancelled pointerdown), so nothing
+  // stops it moving focus to the body, which would pause capture and let go
+  // of the held button. With a button held in the frame and the window still
+  // focused, that's all this is: take focus back.
+  if (mouseDown.size && kbd.ownerDocument.hasFocus()) {
+    setTimeout(() => { if (capturing) kbd.focus({ preventScroll: true }); });
+    return;
+  }
+  stopCapture(true);
+});
+
+for (const b of kbdBtns) {
+  b.addEventListener('mousedown', (e) => e.preventDefault()); // don't steal focus from kbd
+  b.addEventListener('click', () => (capturing ? stopCapture() : startCapture()));
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (pipWindow) return; // popped out: this tab being hidden doesn't matter
+  if (document.hidden) { stopCapture(true); releaseAll(); }
+});
+
+// --- fullscreen -------------------------------------------------------------
+
+const fsBtn = $('#fs-btn');
+if (!document.documentElement.requestFullscreen) fsBtn.hidden = true;
+fsBtn.addEventListener('mousedown', (e) => e.preventDefault());
+fsBtn.addEventListener('click', async () => {
+  if (document.fullscreenElement) return document.exitFullscreen();
+  try {
+    await document.documentElement.requestFullscreen();
+    // Chrome: lets Ctrl+W, Alt+Tab-ish shortcuts etc. reach the page (hold Esc to exit).
+    await navigator.keyboard?.lock?.();
+  } catch { /* fullscreen refused: nothing to do */ }
+});
+document.addEventListener('fullscreenchange', () => {
+  fsBtn.classList.toggle('active', !!document.fullscreenElement);
+  if (!document.fullscreenElement) navigator.keyboard?.unlock?.();
+  // Fill's own fullscreen ended (Esc, Android's back gesture): leave Fill too.
+  if (!document.fullscreenElement && fillFs) setFill(false);
+});
+
+// --- fill -------------------------------------------------------------------
+
+// Fill hides everything but the desktop (header, hints, padding, border) so
+// it takes the whole window, for phones. It goes fullscreen too where the
+// browser allows it (Android Chrome, not iPhone Safari), to drop the
+// browser's own bars. A floating ⌨ / ✕ pair stays in the corner.
+const fillBtn = $('#fill-btn');
+let fillFs = false; // Fill went fullscreen itself, so leaving Fill exits it
+
+async function setFill(on) {
+  document.body.classList.toggle('filled', on);
+  fillBtn.classList.toggle('active', on);
+  if (on && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+    try {
+      await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      fillFs = true;
+    } catch { /* refused: Fill still hides the page's own chrome */ }
+  } else if (!on && fillFs) {
+    fillFs = false;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
+  syncWakeLock();
+  fit();
+}
+
+// On a phone, Fill keeps the screen on (Screen Wake Lock, HTTPS only). The
+// browser drops the lock whenever the tab is hidden, so it's taken again
+// when the tab comes back.
+let wakeLock = null;
+
+async function syncWakeLock() {
+  const want = document.body.classList.contains('filled') && !document.hidden
+    && matchMedia('(pointer: coarse)').matches && 'wakeLock' in navigator;
+  if (!want) {
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    return;
+  }
+  if (wakeLock && !wakeLock.released) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    // Left Fill while the request was in flight.
+    if (!document.body.classList.contains('filled')) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  } catch { wakeLock = null; /* refused (battery saver): the screen sleeps as usual */ }
+}
+document.addEventListener('visibilitychange', syncWakeLock);
+
+for (const b of [fillBtn, $('#fill-exit')]) b.addEventListener('mousedown', (e) => e.preventDefault());
+fillBtn.addEventListener('click', () => { if (!pipWindow) setFill(true); });
+$('#fill-exit').addEventListener('click', () => setFill(false));
+
+// --- screen: off / screenshots / video --------------------------------------
+
+const modeSel = $('#screen-mode'), rateSel = $('#shot-rate'), videoCanvas = $('#video');
+const videoCtx = videoCanvas.getContext('2d');
+const screenStatus = $('#screen-status');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let mode = 'off';
+let shotGen = 0, shotUrl = null;
+
+function setMode(next) {
+  mode = next;
+  store('screenMode', next);
+  modeSel.value = next;
+  stopVideo();
+  stopShots();
+  setScreenStatus('');
+  if (next === 'shots') startShots();
+  if (next === 'video') startVideo();
+}
+modeSel.addEventListener('change', () => setMode(modeSel.value));
+
+function setScreenStatus(text, error) {
+  screenStatus.textContent = text;
+  screenStatus.classList.toggle('error', !!error);
+}
+
+function updateBacking() {
+  frame.classList.toggle('has-shot', !shot.hidden || (!videoCanvas.hidden && !videoPartial));
+  // Hide cursor: only once video frames are actually drawing, since the
+  // stream has the desktop's real cursor in it. Screenshots update too
+  // rarely to aim by, and Off has no picture at all.
+  frame.classList.toggle('no-cursor', hideCursorBox.checked && mode === 'video' && !videoCanvas.hidden);
+}
+
+const hideCursorBox = $('#hide-cursor');
+hideCursorBox.checked = recall('hideCursor') !== '0'; // on unless turned off
+hideCursorBox.addEventListener('change', () => {
+  store('hideCursor', hideCursorBox.checked ? '1' : '0');
+  updateBacking();
+});
+
+// Screenshots
+
+function startShots() {
+  if (!layout?.screenshots) return;
+  shotLoop(++shotGen);
+}
+
+function stopShots() {
+  shotGen++;
+  shot.hidden = true;
+  updateBacking();
+}
+
+async function shotLoop(gen) {
+  while (gen === shotGen) {
+    const started = performance.now();
+    if (!isHidden()) {
+      try {
+        const w = Math.round(frame.clientWidth * (view().devicePixelRatio || 1));
+        const r = await fetch(`/api/screenshot?w=${w}`, { cache: 'no-store' });
+        if (r.ok && gen === shotGen) {
+          const url = URL.createObjectURL(await r.blob());
+          shot.src = url;
+          if (shotUrl) URL.revokeObjectURL(shotUrl);
+          shotUrl = url;
+          shot.hidden = false;
+          updateBacking();
+        }
+      } catch { /* try again next round */ }
+    }
+    // Measured from the start of the fetch, so a slow capture eats into the
+    // wait rather than adding to it. Read every round, so a new rate applies
+    // from the next frame. (Video mode's fallback screenshots use it too.)
+    const interval = Number(rateSel.value) || 1000;
+    await sleep(Math.max(50, interval - (performance.now() - started)));
+  }
+}
+
+// Refresh rate: this browser's last choice, else config.toml's interval_ms.
+let rateChosen = false;
+
+function initRate(defaultMs) {
+  if (rateChosen) return;
+  let saved = null;
+  try { saved = localStorage.getItem('shotRate'); } catch {}
+  const want = String(saved || defaultMs);
+  if (![...rateSel.options].some((o) => o.value === want)) {
+    rateSel.add(new Option(`every ${Number(want) / 1000} s`, want));
+  }
+  rateSel.value = want;
+  rateChosen = true;
+}
+rateSel.addEventListener('change', () => {
+  try { localStorage.setItem('shotRate', rateSel.value); } catch {}
+});
+
+// Video over the /video websocket (H.264, H.265 or AV1, whichever the
+// stream's settings say), decoded with WebCodecs. Each binary message is
+// [flags u8][timestamp µs u64][access unit]; a {"t":"config"} text message
+// comes before the first keyframe and whenever the codec or size changes,
+// and {"t":"settings"} whenever the stream's settings do. Until the first
+// frame is drawn, screenshots fill in, which is also how you see (and
+// click) KDE's screen-share dialog the first time.
+
+const canDecode = 'VideoDecoder' in window;
+const CODEC_NAMES = { h264: 'H.264', h265: 'H.265', av1: 'AV1' };
+let vws = null, vGen = 0, decoder = null, decoderConfig = null, waitingKey = true;
+let vFrames = 0, vBytes = 0, vSize = '', vCodecName = '';
+let configSeq = 0;      // newest {"t":"config"}, so a slow support check can't win over it
+let videoProblem = '';  // shown instead of the live readout while set
+let decoderErrors = []; // recent error times, to stop retrying a hopeless stream
+
+function startVideo() {
+  const gen = ++vGen;
+  videoProblem = '';
+  decoderErrors = [];
+  setScreenStatus('Connecting video…');
+  startShots();
+  const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/video`);
+  sock.binaryType = 'arraybuffer';
+  vws = sock;
+  sock.onopen = () => { if (gen === vGen) updateVideoControls(); };
+  sock.onmessage = (ev) => {
+    if (gen !== vGen) return;
+    if (typeof ev.data === 'string') onVideoMessage(JSON.parse(ev.data));
+    else onVideoFrame(ev.data);
+  };
+  sock.onclose = () => {
+    if (gen !== vGen) return;
+    closeDecoder();
+    updateVideoControls();
+    setScreenStatus('Video disconnected, retrying…', true);
+    setTimeout(() => { if (gen === vGen && mode === 'video' && !isHidden()) startVideo(); }, 2000);
+  };
+}
+
+function stopVideo() {
+  vGen++;
+  if (vws) { vws.onclose = null; vws.close(); vws = null; }
+  closeDecoder();
+  videoCanvas.hidden = true;
+  updateBacking();
+  updateVideoControls();
+}
+
+function closeDecoder() {
+  if (decoder && decoder.state !== 'closed') decoder.close();
+  decoder = null;
+  decoderConfig = null;
+  waitingKey = true;
+  configSeq++;
+}
+
+function makeDecoder() {
+  if (decoder && decoder.state !== 'closed') decoder.close();
+  waitingKey = true;
+  decoder = new VideoDecoder({
+    output: drawFrame,
+    error: (err) => {
+      console.warn('video decoder:', err);
+      const now = performance.now();
+      decoderErrors = decoderErrors.filter((t) => now - t < 10000).concat(now);
+      if (decoderErrors.length > 5) {
+        videoProblem = `This browser keeps failing to decode the ${vCodecName} stream. Try another codec in ⚙.`;
+        setScreenStatus(videoProblem, true);
+        decoder = null;
+        return;
+      }
+      // Start over from the next keyframe with the same settings.
+      if (decoderConfig) { makeDecoder(); requestKeyframe(); }
+    },
+  });
+  decoder.configure({ ...decoderConfig, optimizeForLatency: true });
+}
+
+// Where the shared screen goes in the frame. The frame is the whole
+// desktop (every enabled output); the portal shares one screen, or the
+// whole workspace, and says where it sits. A screen that isn't part of the
+// layout (say a virtual output) fills the frame, with a note, since its
+// position means nothing here.
+let videoArea = null; // {x, y, w, h} in KWin's coordinates, from the config
+let videoPartial = false; // the video covers one output of several
+let videoAreaNote = '';
+
+function placeVideo() {
+  const st = videoCanvas.style;
+  frame.querySelectorAll('.output.covered').forEach((el) => el.classList.remove('covered'));
+  videoPartial = false;
+  videoAreaNote = '';
+  st.left = st.top = '0';
+  st.width = st.height = '100%';
+  if (layout && videoArea) {
+    const x = videoArea.x - (layout.left || 0), y = videoArea.y - (layout.top || 0);
+    const { w, h } = videoArea;
+    const whole = x === 0 && y === 0 && w === layout.width && h === layout.height;
+    const i = layout.outputs.findIndex((o) => o.x === x && o.y === y && o.w === w && o.h === h);
+    if (!whole && i >= 0) {
+      Object.assign(st, {
+        left: `${(x / layout.width) * 100}%`, top: `${(y / layout.height) * 100}%`,
+        width: `${(w / layout.width) * 100}%`, height: `${(h / layout.height) * 100}%`,
+      });
+      videoPartial = true;
+      frame.querySelectorAll('.output')[i]?.classList.add('covered');
+    } else if (!whole) {
+      videoAreaNote = `The shared screen (${w}×${h}) isn't one of this desktop's screens, so clicks won't line up. Use ⚙ → Pick screen again.`;
+    }
+  }
+  updateBacking();
+}
+
+// The decoder for a {"t":"config"}: checked first, so a codec this browser
+// can't decode (say another viewer picked AV1) says so instead of failing
+// over and over.
+function configureVideo(msg) {
+  closeDecoder();
+  const seq = configSeq;
+  const cfg = { codec: msg.codec, codedWidth: msg.width, codedHeight: msg.height };
+  vCodecName = CODEC_NAMES[msg.name] || msg.name || msg.codec;
+  vSize = `${msg.width}×${msg.height}`;
+  videoArea = msg.area || null;
+  placeVideo();
+  VideoDecoder.isConfigSupported(cfg).then((r) => r.supported, () => false).then((ok) => {
+    if (seq !== configSeq) return;
+    if (!ok) {
+      videoProblem = `This browser can't decode ${vCodecName} (${msg.codec}). Pick another codec in ⚙.`;
+      setScreenStatus(videoProblem, true);
+      return;
+    }
+    videoProblem = '';
+    decoderErrors = [];
+    decoderConfig = cfg;
+    videoCanvas.width = msg.width;
+    videoCanvas.height = msg.height;
+    makeDecoder();
+    requestKeyframe(); // the one that came with this config went by during the check
+  });
+}
+
+function requestKeyframe() {
+  if (vws && vws.readyState === WebSocket.OPEN) vws.send(JSON.stringify({ t: 'keyframe' }));
+}
+
+function onVideoMessage(msg) {
+  if (msg.t === 'state') {
+    if (msg.state === 'starting') {
+      setScreenStatus('Waiting for screen sharing. If KDE shows a share dialog on the desktop, pick the screen and allow it (it shows in the screenshot here).');
+    } else if (msg.state === 'error') {
+      setScreenStatus(`Video: ${msg.error}`, true);
+    } else if (msg.state === 'streaming' && videoCanvas.hidden) {
+      setScreenStatus('Video starting…');
+    }
+  } else if (msg.t === 'config') {
+    configureVideo(msg);
+  } else if (msg.t === 'settings') {
+    showVideoSettings(msg);
+  } else if (msg.t === 'health') {
+    onVideoHealth(msg);
+  } else if (msg.t === 'stats') {
+    const waiter = statsWaiters.shift();
+    if (waiter) waiter({ ...msg, rtt: performance.now() - waiter.sent });
+  }
+}
+
+function onVideoFrame(buf) {
+  if (benchCount) { benchCount.recv++; benchCount.bytes += buf.byteLength; }
+  if (!decoder || decoder.state !== 'configured') return;
+  const view = new DataView(buf);
+  const key = (view.getUint8(0) & 1) === 1;
+  if (waitingKey && !key) return;
+  if (decoder.decodeQueueSize > 6) {
+    // Decoding is falling behind: skip to the next keyframe.
+    if (benchCount) benchCount.skips++;
+    waitingKey = true;
+    requestKeyframe();
+    return;
+  }
+  waitingKey = false;
+  vBytes += buf.byteLength;
+  decoder.decode(new EncodedVideoChunk({
+    type: key ? 'key' : 'delta',
+    timestamp: Number(view.getBigUint64(1)),
+    data: new Uint8Array(buf, 9),
+  }));
+}
+
+function drawFrame(videoFrame) {
+  // Only the top-left width×height (the config's, the real picture): the
+  // GPU's AV1 encoder pads frames up to its block size (1440×900 decodes as
+  // 1472×912) without marking the padding as cropped, as H.264/H.265's SPS
+  // does, so the rest is black bars. Drawing the whole frame squeezed them in.
+  const w = Math.min(videoCanvas.width, videoFrame.displayWidth);
+  const h = Math.min(videoCanvas.height, videoFrame.displayHeight);
+  videoCtx.drawImage(videoFrame, 0, 0, w, h, 0, 0, w, h);
+  videoFrame.close();
+  vFrames++;
+  if (benchCount) benchCount.decoded++;
+  if (videoCanvas.hidden) {
+    videoCanvas.hidden = false;
+    shotGen++; // first frame is up: stop the fallback screenshots
+    shot.hidden = true;
+    updateBacking();
+  }
+}
+
+setInterval(() => {
+  if (mode === 'video' && !videoCanvas.hidden && !videoProblem) {
+    // A still screen only sends ~1 fps (the 1s keepalive), so low numbers are normal.
+    const text = `${vCodecName} ${vSize} · ${vFrames} fps · ${(vBytes * 8 / 1e6).toFixed(1)} Mb/s`;
+    setScreenStatus(videoAreaNote || `Video ${text}`, !!videoAreaNote);
+    vNow.textContent = `Now: ${text}`;
+  } else {
+    vNow.textContent = '';
+  }
+  vFrames = 0;
+  vBytes = 0;
+}, 1000);
+
+// --- settings menu ------------------------------------------------------------
+
+const settingsBtn = $('#settings-btn'), settingsPanel = $('#settings');
+
+function toggleSettings(open = settingsPanel.hidden) {
+  settingsPanel.hidden = !open;
+  settingsBtn.classList.toggle('active', open);
+  settingsBtn.setAttribute('aria-expanded', String(open));
+}
+settingsBtn.addEventListener('click', () => toggleSettings());
+// Close on a click anywhere else (including the frame, in this window).
+document.addEventListener('pointerdown', (e) => {
+  if (!settingsPanel.hidden && !settingsPanel.contains(e.target) && !settingsBtn.contains(e.target)) {
+    toggleSettings(false);
+  }
+});
+
+// Video settings belong to the stream, not this browser: the server sends
+// them on connect and after anyone's change, and they can only be changed
+// while this page is connected to the video.
+
+const vCodec = $('#v-codec'), vBitrate = $('#v-bitrate'), vFps = $('#v-fps'), vScale = $('#v-scale');
+const vNote = $('#v-note'), vNow = $('#v-now'), vSupportList = $('#v-support');
+const vBitrateAuto = $('#v-bitrate-auto'), vHealth = $('#v-health');
+const videoSelects = [vCodec, vBitrate, vFps, vScale];
+let videoSettings = null;   // last {"t":"settings"} from the server
+const decodeSupport = {};   // codec -> 'hardware' | 'software' | 'no'
+
+function showVideoSettings(msg) {
+  videoSettings = msg;
+  selectValue(vBitrate, msg.bitrate, (v) => `${v / 1000} Mb/s`);
+  vBitrateAuto.textContent = msg.bitrate === 'auto' ? `Auto (now ${msg.auto_kbps / 1000} Mb/s)` : 'Auto';
+  selectValue(vFps, msg.fps, (v) => `${v} fps`);
+  selectValue(vScale, msg.scale, (v) => `${Math.round(v * 100)}%`);
+  vCodec.value = msg.codec;
+  updateVideoControls();
+}
+
+// Values set in config.toml needn't be one of the menu's; add them if not.
+function selectValue(sel, value, label) {
+  const v = String(value);
+  if (![...sel.options].some((o) => o.value === v)) sel.add(new Option(label(value), v));
+  sel.value = v;
+}
+
+function updateVideoControls() {
+  const live = !!(vws && vws.readyState === WebSocket.OPEN && videoSettings);
+  for (const sel of videoSelects) sel.disabled = !live;
+  vNote.textContent = live ? '' : 'Switch Screen to Video to see and change these.';
+  for (const o of vCodec.options) {
+    const where = videoSettings?.codecs?.[o.value];
+    const dec = decodeSupport[o.value];
+    let label = CODEC_NAMES[o.value];
+    if (videoSettings && !where) label += ' (server can’t encode)';
+    else if (dec === 'no') label += ' (browser can’t decode)';
+    else if (where === 'cpu') label += ' (CPU encoder)';
+    o.textContent = label;
+    o.disabled = (videoSettings && !where) || dec === 'no';
+  }
+}
+
+function sendVideoSettings() {
+  if (!vws || vws.readyState !== WebSocket.OPEN) return;
+  vws.send(JSON.stringify({
+    t: 'settings', codec: vCodec.value,
+    bitrate: vBitrate.value === 'auto' ? 'auto' : Number(vBitrate.value),
+    fps: Number(vFps.value), scale: Number(vScale.value),
+  }));
+  setScreenStatus('Applying video settings…');
+}
+for (const sel of videoSelects) sel.addEventListener('change', sendVideoSettings);
+
+// Video errors (the server rebuilds the pipeline after most of them), from
+// {"t":"health"}. Its ages are seconds at sending, turned into local times
+// here so the server and this device needn't agree on the clock.
+const ALERT_MS = 5 * 60 * 1000;
+let health = null; // { errors, lastError, lastErrorAt, gaveUp }
+
+function onVideoHealth(msg) {
+  const now = Date.now();
+  health = {
+    errors: msg.errors, lastError: msg.last_error, gaveUp: msg.gave_up,
+    lastErrorAt: msg.last_error_ago == null ? null : now - msg.last_error_ago * 1000,
+  };
+  showVideoHealth();
+}
+
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
+}
+
+function showVideoHealth() {
+  if (!health) return;
+  const now = Date.now();
+  const recent = health.lastErrorAt != null && now - health.lastErrorAt < ALERT_MS;
+  settingsBtn.classList.toggle('alert', recent || health.gaveUp);
+  vHealth.classList.toggle('bad', recent || health.gaveUp);
+  if (!health.errors) {
+    vHealth.textContent = 'Video errors: none since the server started';
+    vHealth.title = '';
+    return;
+  }
+  vHealth.textContent = `Video errors: ${health.errors} · last ${ago(now - health.lastErrorAt)}`
+    + (health.gaveUp ? ' · stopped, too many' : ' · recovered');
+  vHealth.title = health.lastError || '';
+}
+setInterval(showVideoHealth, 15000);
+
+// What this browser can decode, asked of WebCodecs with a typical stream
+// of each codec. "prefer-hardware" is only reported as supported when
+// there's a hardware decoder (Chrome; Safari doesn't distinguish).
+async function probeDecodeSupport() {
+  const probes = { h264: 'avc1.640028', h265: 'hev1.1.6.L120.90', av1: 'av01.0.08M.08' };
+  const ask = async (cfg) => {
+    try { return (await VideoDecoder.isConfigSupported(cfg)).supported; } catch { return false; }
+  };
+  for (const [name, codec] of Object.entries(probes)) {
+    const cfg = { codec, codedWidth: 1920, codedHeight: 1080 };
+    if (!canDecode || !(await ask(cfg))) decodeSupport[name] = 'no';
+    else decodeSupport[name] = (await ask({ ...cfg, hardwareAcceleration: 'prefer-hardware' })) ? 'hardware' : 'software';
+  }
+  const words = { hardware: 'yes, in hardware', software: 'yes, in software (CPU)', no: 'no' };
+  vSupportList.replaceChildren(...Object.keys(probes).map((name) => {
+    const li = document.createElement('li');
+    li.textContent = `${CODEC_NAMES[name]}: ${words[decodeSupport[name]]}`;
+    return li;
+  }));
+  if (!canDecode) vSupportList.append(Object.assign(document.createElement('li'), { textContent: 'No WebCodecs in this browser, so no video at all.' }));
+  updateVideoControls();
+}
+probeDecodeSupport();
+
+// --- benchmark ------------------------------------------------------------------
+//
+// Counts frames as they arrive and are decoded here, and asks the server
+// for its running totals ({"t":"stats"}) at both ends of each span: frames
+// it encoded, and how often it dropped this browser's backlog. The stats
+// request doubles as the round-trip probe.
+
+const benchSweepBtn = $('#bench-sweep'), benchNowBtn = $('#bench-now');
+const benchStatus = $('#bench-status'), benchTable = $('#bench-results');
+let benchCount = null;    // {recv, bytes, decoded, skips} while measuring
+let benchRunning = false;
+const statsWaiters = [];  // resolvers for outstanding {"t":"stats"} requests
+
+const SWEEP = [
+  { label: 'Moving · 8 Mb/s · 60', pattern: 'moving', bitrate: 8000, fps: 60 },
+  { label: 'Moving · 8 Mb/s · 120', pattern: 'moving', bitrate: 8000, fps: 120 },
+  { label: 'Noise · 8 Mb/s · 60', pattern: 'noise', bitrate: 8000, fps: 60 },
+  { label: 'Noise · 20 Mb/s · 60', pattern: 'noise', bitrate: 20000, fps: 60 },
+  { label: 'Noise · 50 Mb/s · 60', pattern: 'noise', bitrate: 50000, fps: 60 },
+];
+
+function videoSend(msg) {
+  if (!vws || vws.readyState !== WebSocket.OPEN) throw new Error('video disconnected');
+  vws.send(JSON.stringify(msg));
+}
+
+function askStats() {
+  return new Promise((resolve, reject) => {
+    const waiter = (s) => { clearTimeout(timer); resolve(s); };
+    waiter.sent = performance.now();
+    const timer = setTimeout(() => {
+      statsWaiters.splice(statsWaiters.indexOf(waiter), 1);
+      reject(new Error('the server stopped answering'));
+    }, 5000);
+    statsWaiters.push(waiter);
+    try { videoSend({ t: 'stats' }); } catch (err) { clearTimeout(timer); statsWaiters.pop(); reject(err); }
+  });
+}
+
+async function measure(seconds) {
+  const s0 = await askStats();
+  const count = benchCount = { recv: 0, bytes: 0, decoded: 0, skips: 0 };
+  const t0 = performance.now();
+  const rtts = [];
+  try {
+    while (performance.now() - t0 < seconds * 1000) {
+      await sleep(500);
+      rtts.push((await askStats()).rtt);
+    }
+  } finally {
+    benchCount = null;
+  }
+  const secs = (performance.now() - t0) / 1000;
+  const s1 = await askStats();
+  rtts.sort((a, b) => a - b);
+  return {
+    sent: (s1.frames - s0.frames) / (s1.time - s0.time),
+    recv: count.recv / secs, decoded: count.decoded / secs,
+    mbps: count.bytes * 8 / secs / 1e6,
+    skips: (s1.resyncs - s0.resyncs) + count.skips,
+    rtt: rtts[Math.floor(rtts.length / 2)],
+  };
+}
+
+function addBenchRow(label, r) {
+  const tr = document.createElement('tr');
+  const cells = [label, r.sent.toFixed(0), r.recv.toFixed(0), r.decoded.toFixed(0),
+    r.mbps.toFixed(1), String(r.skips), r.rtt.toFixed(0)];
+  for (const text of cells) tr.append(Object.assign(document.createElement('td'), { textContent: text }));
+  benchTable.tBodies[0].append(tr);
+  benchTable.hidden = false;
+}
+
+async function runBench(sweep) {
+  if (benchRunning) return;
+  benchRunning = true;
+  updateBenchButtons();
+  benchTable.tBodies[0].replaceChildren();
+  const codec = vCodecName;
+  try {
+    if (!sweep) {
+      benchStatus.textContent = 'Measuring the screen for 10 s…';
+      addBenchRow(`Screen · ${codec}`, await measure(10));
+    } else {
+      for (const [i, step] of SWEEP.entries()) {
+        benchStatus.textContent = `${i + 1}/${SWEEP.length}: ${step.label}…`;
+        videoSend({ t: 'bench', ...step });
+        await sleep(2000); // the encoder restarts and the decoder catches its first keyframe
+        addBenchRow(`${codec} · ${step.label}`, await measure(5));
+      }
+    }
+    benchStatus.textContent = sweep
+      ? 'Done, back on the screen. Sent < target: the encoder (or, for noise above ~80 fps, the test picture) is the limit. Recv < Sent, Skips or a growing RTT: the network. Decoded < Recv: this browser.'
+      : 'Done.';
+  } catch (err) {
+    benchStatus.textContent = `Stopped: ${err.message}`;
+  } finally {
+    if (sweep) try { videoSend({ t: 'bench' }); } catch {} // back to the screen
+    benchRunning = false;
+    updateBenchButtons();
+  }
+}
+
+const repickBtn = $('#v-repick');
+function updateBenchButtons() {
+  const live = !!(vws && vws.readyState === WebSocket.OPEN && !videoCanvas.hidden);
+  benchSweepBtn.disabled = benchNowBtn.disabled = benchRunning || !live;
+  repickBtn.disabled = benchRunning || !(vws && vws.readyState === WebSocket.OPEN);
+}
+repickBtn.addEventListener('click', () => {
+  if (vws && vws.readyState === WebSocket.OPEN) vws.send(JSON.stringify({ t: 'repick' }));
+});
+benchSweepBtn.addEventListener('click', () => runBench(true));
+benchNowBtn.addEventListener('click', () => runBench(false));
+setInterval(updateBenchButtons, 1000);
+updateBenchButtons();
+
+// Don't keep a hidden tab's decoder fed; the server keeps capture running
+// for a few seconds, so coming back is quick.
+document.addEventListener('visibilitychange', () => {
+  if (mode !== 'video' || pipWindow) return;
+  if (document.hidden) stopVideo();
+  else startVideo();
+});
+
+// --- actual size --------------------------------------------------------------
+
+const sizeBtn = $('#size-btn');
+let actualSize = false;
+try { actualSize = localStorage.getItem('actualSize') === '1'; } catch {}
+sizeBtn.classList.toggle('active', actualSize);
+sizeBtn.addEventListener('mousedown', (e) => e.preventDefault());
+sizeBtn.addEventListener('click', () => {
+  actualSize = !actualSize;
+  sizeBtn.classList.toggle('active', actualSize);
+  try { localStorage.setItem('actualSize', actualSize ? '1' : '0'); } catch {}
+  fit();
+});
+
+// --- pop out ----------------------------------------------------------------
+
+// Document Picture-in-Picture (Chrome/Edge 116+): moves the live stage
+// (frame, video, screenshots) and the keyboard textarea into an always-on-top
+// window. Elements keep their event listeners when they move between
+// documents, so input works there unchanged. Closing the window moves them
+// back. Plain video PiP would only show the picture, without input.
+const popBtn = $('#pop-btn'), poppedNote = $('#popped-note'), mainEl = $('main');
+let pipWindow = null;
+
+function isHidden() {
+  return !pipWindow && document.hidden;
+}
+
+if (!('documentPictureInPicture' in window)) popBtn.hidden = true;
+popBtn.addEventListener('mousedown', (e) => e.preventDefault());
+popBtn.addEventListener('click', async () => {
+  if (pipWindow) return pipWindow.close();
+  if (!layout) return;
+  const width = Math.max(320, Math.round(frame.getBoundingClientRect().width));
+  let pip;
+  try {
+    pip = await documentPictureInPicture.requestWindow({
+      width, height: Math.round(width * layout.height / layout.width),
+    });
+  } catch (err) {
+    showHint(`Couldn't pop out: ${err.message}`, true);
+    return;
+  }
+  const wasCapturing = capturing;
+  pipWindow = pip;
+  for (const s of document.querySelectorAll('style')) pip.document.head.append(s.cloneNode(true));
+  pip.document.title = document.title;
+  pip.document.body.append(stage, kbd);
+  poppedNote.hidden = false;
+  popBtn.classList.add('active');
+  pip.addEventListener('resize', fit);
+  watchLock(pip.document);
+  pip.addEventListener('pagehide', () => {
+    releaseAll();
+    const recapture = capturing;
+    mainEl.insertBefore(stage, poppedNote.nextSibling);
+    document.body.append(kbd);
+    pipWindow = null;
+    poppedNote.hidden = true;
+    popBtn.classList.remove('active');
+    fit();
+    if (recapture) startCapture();
+  });
+  fit();
+  if (wasCapturing) startCapture(); // the move took focus off the textarea
+});
+
+// --- remembered settings ------------------------------------------------------
+
+// Per browser (localStorage): screen mode, keyboard capture, screenshot
+// rate, actual size and hide cursor, so a reload comes back the way it was. Storage can
+// be unavailable (private windows), so every access is guarded.
+function store(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+function recall(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function restoreSession() {
+  if (!layout) return;
+  const savedMode = recall('screenMode');
+  const option = savedMode && modeSel.querySelector(`[value="${savedMode}"]`);
+  if (option && !option.hidden && savedMode !== mode) setMode(savedMode);
+  if (recall('keyboard') === '1') {
+    // On a phone, focusing straight away would pop up the soft keyboard
+    // before you've touched anything, so wait for the first tap instead.
+    if (matchMedia('(pointer: coarse)').matches || !document.hasFocus()) {
+      resumeCapture = true;
+      showHint();
+    } else {
+      startCapture();
+    }
+  }
+}
+
+// --- start ------------------------------------------------------------------
+
+new ResizeObserver(fit).observe(stage);
+showHint();
+connect();
+loadLayout().then(restoreSession);
+setInterval(loadLayout, 5000);
+</script>
+</body>
+</html>

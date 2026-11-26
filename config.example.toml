@@ -1,0 +1,28 @@
+# Copy to ~/.config/desk-window/config.toml (or point --config at it) to
+# change any of these. Missing keys keep the defaults shown here. Restart
+# desk-window to apply.
+
+[screenshots]
+# Allow the page's Screenshots mode (a screenshot behind the frame).
+# interval_ms is the default refresh rate; the page's rate picker overrides
+# it per browser. Each browser remembers its own screen mode.
+enabled = true
+interval_ms = 1000
+
+[video]
+# Allow the page's "Video" screen mode: live video through the KDE
+# screen-share portal. The first time, KDE asks on the desktop which screen
+# to share (switch the page to Screenshots to see and click the dialog);
+# it remembers the answer after that.
+enabled = true
+# auto = VA-API on the GPU if available, else software (x264 / x265; AV1
+# is GPU-only). va / software force one or the other.
+encoder = "auto"
+# The stream's starting settings. The page's ⚙ menu changes them for every
+# viewer, and those choices are saved (in
+# ~/.local/state/desk-window/video-settings.json) and win over these;
+# delete that file to come back to these.
+codec = "h264"        # h264 | h265 | av1
+bitrate_kbps = 8000
+fps = 60              # frame-rate cap, 1-240 (240 = the display's own rate)
+scale = 1.0           # resolution, as a fraction of the desktop's
